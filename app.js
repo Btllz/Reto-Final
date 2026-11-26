@@ -179,3 +179,15 @@ app.delete('/material/delete/:id', verificarToken, esAdmin, async(req, res) => {
     res.status(500).json({mensaje: 'Error en el servidor'});
   }
 });
+
+if (require.main === module) {
+  mongoose.connect(DB)
+  .then(() => console.log('conectado a la base de datos'))
+  .catch(err => console.log('Error', err.message));
+  
+  app.listen(PORT, () => {
+    console.log(`Servidor corriendo en el puerto ${PORT]`);
+  });
+}
+
+module.exports = app;
