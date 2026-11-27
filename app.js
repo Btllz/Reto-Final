@@ -1,48 +1,46 @@
+const express = require('express');
+const app = express();
 require('dotenv').config();
 const path = require('path');
 const JWT = require('jsonwebtoken');
-const app = express();
 const PORT = process.env.PORT || 3000;
 const DB = process.env.DB;
 const JWT_SECRET = process.env.JWT_SECRET;
 const mongoose = require('mongoose');
-const { type } = require('os');
 const bcryptjs = require('bcryptjs');
 
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
-const mongoose = require('mongoose');
-const bcrypt = require('bcryptjs');
 
 const usuarioSchema = new mongoose.Schema ({
-  correo: {type: String, require: true, unique: true},
-  password: {type: String, require: true},
-  rol: {type: String, enum: ['solicitante', 'admin'] default: 'solicitante'}
+  correo: {type: String, required: true, unique: true},
+  password: {type: String, required: true},
+  rol: {type: String, enum: ['solicitante', 'admin'], default: 'solicitante'}
 });
 
-const usuario = new mongoose.model('usuario', usuarioSchema);
+const Usuario = mongoose.model('usuario', usuarioSchema);
 
 const materialSchema = new mongoose.Schema ({
-  nombre: {type: String, require: true},
-  lote: {type: String, require: true},
-  fechaCad: {type: date, require: true},
-  cantidadDisp: {type:Number, require: true}
-}]);
+  nombre: {type: String, required: true},
+  lote: {type: String, required: true},
+  fechaCad: {type: Date, required: true},
+  cantidadDisp: {type:Number, required: true}
+});
 
-const material = new mongoose.Schema({'material', materialSchema});
+const Material = mongoose.model('material', materialSchema);
 
-//-------------------------------------------------------------------------
+//------------------------------------------------------------------------
 async function cifrarPassword(password){
   const saltRounds = 10;
-  return await bcryptjs.hash(saltRounds, password);
+  return await bcryptjs.hash(password, saltRounds);
 }
 
-async function(passwordEscrita, passwordGuardada){
+async function datosValidos(passwordEscrita, passwordGuardada){
   return await bcryptjs.compare(passwordEscrita, passwordGuardada);
 }
 
-async function verificarToken(req, res, next){
+function verificarToken(req, res, next){
   const cabecera = req.headers['authorization'];
   if(!cabecera) return res.status(401).json({error: 'Falta el token'});
 
@@ -54,37 +52,43 @@ async function verificarToken(req, res, next){
     next();
   } catch(e){
     console.log(e.message);
-    return res.status(401).json({error: 'Se requiere rol de administror'});
+    return res.status(401).json({error: 'Token inválido'});
   }
-  next();
+}
+
+function esAdmin(req, res, next){
+  if (req.usuario.rol !== 'admin'){
+    return res.status(403).json({error: 'Acción inválida para tus permisos actuales'});
+  }
+next();
 }
 //--------------------------------------------------------------------------
 
-app.post('/material/register', async (req, res){
+app.post('/material/register', async (req, res) => {
   try{
     const {correo, password} = req.body;
     if(!correo || !password) return res.status(400).json({mensaje: 'Debe llenar todos los campos'});
 
-    const existe = await usuario.findOne({correo});
+    const existe = await Usuario.findOne({correo});
     if(existe) return res.status(409).json({mensaje: 'El correo electrónico ya está registrado, ingresa uno nuevo'});
 
     const nuevaPassword = await cifrarPassword(password);
 
-    await usuario.create({correo: correo, password: nuevaPassword});
+    await Usuario.create({correo: correo, password: nuevaPassword});
     res.status(201).json({mensaje: 'Cuenta creada exitosamente'});
-  } cactch(e){
+  } catch(e){
     console.log(e);
-    res.status(500).json(error: 'Error en el servidor');
+    res.status(500).json({error: 'Error en el servidor'});
   }
 });
-
-app.post('material/login', async (req, res){
+//---------------------------------------------------------------------------------------------------
+app.post('/material/login', async (req, res) => {
   try{
     const {correo, password} = req.body;
-    if(!correo || !password) return res.status(409).json({mensaje: 'Llena todos los campos'});
+    if(!correo || !password) return res.status(400).json({mensaje: 'Llena todos los campos'});
 
-    const usuario = await usuario.findOne({correo});
-    if(!usuario) return res.status(401).json({'Correo o contraseña inválidos'});
+    const usuario = await Usuario.findOne({ correo });
+    if(!usuario) return res.status(401).json({mensaje: 'Correo o contraseña inválidos'});
 
     const contraseñaCorrecta = await datosValidos(password, usuario.password);
     if (!contraseñaCorrecta) return res.status(401).json({error: 'Correo o contraseña inválidos'});
@@ -97,7 +101,7 @@ app.post('material/login', async (req, res){
   }
 });
 
-app.post('material/add', verificarToken, esAdmin, async (req, res) => {
+app.post('/material/add', verificarToken, esAdmin, async (req, res) => {
   try {
     const {nombre, lote, fechaCad, cantidadDisp} = req.body;
 
@@ -106,17 +110,17 @@ app.post('material/add', verificarToken, esAdmin, async (req, res) => {
     }
     if (cantidadDisp < 0) return res.status(400).json({mensaje: 'La cantidad no puede ser menor a cero'});
 
-    await material.create({nombre, lote, fechaCad, cantidadDisp});
+    await Material.create({nombre, lote, fechaCad, cantidadDisp});
     res.status(201).json({mensaje: 'Material agregado correctamente'});
   } catch(e){
     console.log(e);
-    res.status(500).json('Error en el servidor');
+    res.status(500).json({error: 'Error en el servidor'});
   }
 });
 
 app.get('/material/ver', verificarToken, async (req, res) => {
   try{
-    const materiales = await material.find();
+    const materiales = await Material.find();
 
     res.status(200).json({
       mensaje: 'Lista de materiales obtenida con éxito',
@@ -129,9 +133,9 @@ app.get('/material/ver', verificarToken, async (req, res) => {
   }
 });
 
-app.post('/material/salida', verificarToken, async(req, res) => {
+app.post('/material/salida/:id', verificarToken, async(req, res) => {
   try {
-    const materiales = await material.findOneAndUpdate(
+    const materiales = await Material.findOneAndUpdate(
       {_id: req.params.id, cantidadDisp: { $gt: 0} },
       {$inc: {cantidadDisp: -1 } },
       {new: true}
@@ -139,7 +143,7 @@ app.post('/material/salida', verificarToken, async(req, res) => {
 
     if(!materiales) return res.status(409).json({error: 'Material agotado o inexistente'});
 
-    res.status(200).json({mensaje: 'Salida exitosa', material});
+    res.status(200).json({mensaje: 'Salida exitosa', materiales});
   } catch(e){
     console.log(e);
     res.status(500).json({mensaje: 'Error al registrar la salida'});
@@ -149,9 +153,9 @@ app.post('/material/salida', verificarToken, async(req, res) => {
 app.put('/material/:id', verificarToken, esAdmin, async(req, res) => {
   try {
     const {nombre, lote, fechaCad, cantidadDisp} = req.body;
-    const matActualizado = await material.findbyIdAndUpdate(
+    const matActualizado = await Material.findByIdAndUpdate(
       req.params.id.trim(),
-      {nombre, precio, cantidadDisp},
+      {nombre, lote, fechaCad, cantidadDisp},
       {new: true, runValidators: true}
     );
 
@@ -166,13 +170,13 @@ app.put('/material/:id', verificarToken, esAdmin, async(req, res) => {
 
 app.delete('/material/delete/:id', verificarToken, esAdmin, async(req, res) => {
   try{
-    const matEliminado = await material.findByIdAndDelete(req.params.id.trim());
+    const matEliminado = await Material.findByIdAndDelete(req.params.id.trim());
 
     if(!matEliminado) return res.status(404).json({mensaje: 'No se encontró el material'});
 
     res.status(200).json({
       mensaje: 'Material eliminado correctamente',
-      material: matElimnado
+      material: matEliminado
     });
   } catch(e){
     console.log(e);
@@ -186,7 +190,7 @@ if (require.main === module) {
   .catch(err => console.log('Error', err.message));
   
   app.listen(PORT, () => {
-    console.log(`Servidor corriendo en el puerto ${PORT]`);
+    console.log(`Servidor corriendo en el puerto ${PORT}`);
   });
 }
 
