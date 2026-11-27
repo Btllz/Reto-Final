@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="utf-8">
+    <title>Actividad 4</title>
+    <link rel="stylesheet" href="styles.css">
+    <style>
+        .oculto { display: none; }
+    </style>
+</head>
+
+<body>
+    <p id="errorMensaje" class="oculto"></p>
+
+    <div id="seccionLogin" class="oculto">
+        <form id="loginForm">
+            <h1>Iniciar Sesión</h1>
+            <input id="correoCampo" type="email" placeholder="correo@correo.com" required>
+            <input id="passwordCampo" type="password" placeholder="contraseña" required>
+            <button type="submit">Continuar</button>
+            <button type="button" id="irRegistro">No tengo cuenta</button>
+        </form>
+    </div> 
+
+    <div id="seccionRegistro" class="oculto">
+        <form id="registroForm">
+            <h1>Registro</h1>
+            <input id="correoCampoRegistro" type="email" placeholder="correo@correo.com" required>
+            <input id="passwordCampoRegistro" type="password" placeholder="contraseña" required>
+            <button type="submit">Continuar</button>
+            <button type="button" id="irInicioSesion">Ya tengo cuenta</button>
+        </form>
+    </div>
+
+    <div id="seccionAgregar" class="oculto">
+        <h2>Agregar material</h2>
+        <form id="nuevoMat">
+            <input type="text" id="nombreMat" placeholder="Material" required>
+            <input type="text" id="lote" placeholder="Lote" required>
+            <input type="date" id="fechaCad" placeholder="00/00/0000" required>  
+          <input type="number" id="cantidadDisponible" placeholder="Cantidad disponible" min="0" required>
+            <button type="submit">Guardar</button>
+        </form>
+    </div>
+
+    <div id="seccionVer" class="oculto">
+        <h2>Lista de Materiales</h2>
+        <button type="button" id="actualizarMat">Actualizar Materiales</button>
+        <button type="button" id="cerrarSesion">Cerrar sesión</button>
+        <ul id="listaMat"></ul>
+    </div>
+
+    <script>
+    const mensaje = document.getElementById('errorMensaje');
+    const listaMat = document.getElementById('listaMat');
+    let temporizador;
+
+//--------------------------------------------------------------- UTILIDADES Y FUNCIONES ------------------------------------------------------
+      
+    async function apiFetch(ruta, opciones = {}, {requiereSesion = true} = {}) { //opciones: lo que le pasas a fetch
+      try{
+        const respuesta = await fetch(ruta, opciones);
+        const datos = await respuesta.json();
+
+        if (respuesta.status === 401 && requiereSesion) {
+          sesionExpirada();
+          return null;
+        }
+        if(!respuesta.ok){
+          mostrarMensaje(textoError(datos));
+          return null;
+        }
+        return datos;
+      } catch(e){
+        mostrarMensaje('Error al conectar con el servidor');
+        return null;
+      }
+    }
+    
+      function mostrarMensaje(texto) {
+        clearTimeout(temporizador);
+        mensaje.textContent = texto;
+        mensaje.classList.remove('oculto');
+        temporizador = setTimeout(() => mensaje.classList.add('oculto'), 4000);
+    }
+
+    function mostrar(...ids) {
+        ['seccionLogin', 'seccionRegistro', 'seccionAgregar', 'seccionVer']
+            .forEach(id => document.getElementById(id).classList.add('oculto'));
+        ids.forEach(id => document.getElementById(id).classList.remove('oculto'));
+    }
+
+    function obtenerRol() {
+        try {
+            const token = localStorage.getItem('token');
+            const payload = token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
+            return JSON.parse(atob(payload)).rol;
+        } catch {
+            return null;
+        }
+    }
+
+    function textoError(datos) {
+        return datos.error || datos.mensaje || 'Ocurrió un error';
+    }
+
+    function authHeaders(conJson = false) {
+        const headers = { 'Authorization': 'Bearer ' + localStorage.getItem('token') };
+        if (conJson) headers['Content-Type'] = 'application/json';
+        return headers;
+    }
+
+    function entrarAlaApp() {
+        if (obtenerRol() === 'admin') {
+            mostrar('seccionVer', 'seccionAgregar');
+        } else {
+            mostrar('seccionVer');
+        }
+        verMat();
+    }
+
+    function sesionExpirada() {
+        localStorage.removeItem('token');
+        mostrar('seccionLogin');
+        mostrarMensaje('Tu sesión expiró, inicia sesión de nuevo');
+    }
+
+
+//---------------------------------------------------------------VER MATERIALES--------------------------------------------------------
+async function verMat() {
+    const datos = await apiFetch('/material/ver', { headers: authHeaders() });
+    if (!datos) return;
+
+    const esAdmin = obtenerRol() === 'admin';
+    listaMat.innerHTML = '';
+
+    datos.materiales.forEach(p => {
+        const strDate = new Date(p.fechaCad);
+        const li = document.createElement('li');
+        li.textContent = `${p.nombre} | lote: ${p.lote} | Disponibles: ${p.cantidadDisp} | Fecha de Caducidad: ${strDate.toLocaleDateString('en-GB', { timeZone: 'UTC' })}`;
+
+        const btnSalida = document.createElement('button');
+        btnSalida.textContent = 'Salida';
+        btnSalida.disabled = p.cantidadDisp === 0;
+        btnSalida.addEventListener('click', async () => {
+            const datos = await apiFetch('/material/salida/' + p._id, {
+                method: 'POST',
+                headers: authHeaders()
+            });
+            if (!datos) return;
+            verMat();
+        });
+        li.append(btnSalida);
+
+        if (esAdmin) {
+            const btnBorrar = document.createElement('button');
+            btnBorrar.textContent = 'Borrar';
+            btnBorrar.addEventListener('click', async () => {
+                const datos = await apiFetch('/material/delete/' + p._id, {
+                    method: 'DELETE',
+                    headers: authHeaders()
+                });
+                if (!datos) return;
+                verMat();
+            });
+            li.append(btnBorrar);
+        }
+
+        listaMat.append(li);
+    });
+}
+
+//------------------------------------------------------------LOGIN FORM---------------------------------------------
+    document.getElementById('loginForm').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const correo = document.getElementById('correoCampo').value;
+        const password = document.getElementById('passwordCampo').value;
+
+        const datos = await apiFetch('/material/login', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ correo, password })
+        }, {requiereSesion: false});
+      if (!datos) return;
+      
+        localStorage.setItem('token', datos.token);
+        e.target.reset();
+        entrarAlaApp();
+    });
+//---------------------------------------------------------------REGISTRO FORM-------------------------------------------------------
+    document.getElementById('registroForm').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const correo = document.getElementById('correoCampoRegistro').value;
+        const password = document.getElementById('passwordCampoRegistro').value;
+
+        const datos = await apiFetch('/material/register', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ correo, password })
+        }, {requiereSesion: false});
+        if (!datos) return;
+
+        e.target.reset();
+        mostrar('seccionLogin');
+        mostrarMensaje('Cuenta creada correctamente, ya puedes iniciar sesión');
+    });
+//-----------------------------------------------------------------------SECCION AGREGAR---------------------------------------------
+    document.getElementById('nuevoMat').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const nombre = document.getElementById('nombreMat').value;
+        const lote = document.getElementById('lote').value;
+        const fechaCad = document.getElementById('fechaCad').value;
+        const cantidadDisp = Number(document.getElementById('cantidadDisponible').value);
+
+        const respuesta = await apiFetch('/material/add', {
+            method: 'POST',
+            headers: authHeaders(true),
+            body: JSON.stringify({ nombre, lote, fechaCad, cantidadDisp })
+            }, {requiereSesion:true});
+      if(!respuesta) return;
+
+        e.target.reset();
+        verMat();
+    });
+
+    document.getElementById('actualizarMat').addEventListener('click', verMat);
+    document.getElementById('irRegistro').addEventListener('click', () => mostrar('seccionRegistro'));
+    document.getElementById('irInicioSesion').addEventListener('click', () => mostrar('seccionLogin'));
+    document.getElementById('cerrarSesion').addEventListener('click', () => {
+        localStorage.removeItem('token');
+        mostrar('seccionLogin');
+    });
+
+    //---------------------------------------------------------------INICIO DE APLICACION---------------------------------------
+    if (localStorage.getItem('token')) {
+        entrarAlaApp();
+    } else {
+        mostrar('seccionLogin');
+    }
+</script>
+</body>
+</html>
